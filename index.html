@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GTO 확률 계산기</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>GTO 의사결정 계산기</h1>
+    <p class="subtitle">카드 이미지를 클릭해 핸드/보드를 선택하고, 시뮬레이션 + 솔버 연동(옵션)으로 액션을 확인하세요.</p>
+
+    <section class="panel">
+      <div class="grid-two">
+        <label>
+          라운드
+          <select id="street">
+            <option value="preflop">프리플랍</option>
+            <option value="flop">플랍</option>
+            <option value="turn">턴</option>
+            <option value="river">리버</option>
+          </select>
+        </label>
+
+        <label>
+          상대 인원 수
+          <input id="opponents" type="number" min="1" max="8" value="1" />
+        </label>
+
+        <label>
+          팟 오즈 % (콜에 필요한 최소 승률)
+          <input id="potOdds" type="number" min="0" max="100" value="33" />
+        </label>
+
+        <label>
+          시뮬레이션 횟수
+          <input id="iterations" type="number" min="500" max="50000" step="500" value="5000" />
+        </label>
+      </div>
+
+      <div class="card-pickers">
+        <div>
+          <h3>내 핸드</h3>
+          <div id="heroSlots" class="slots"></div>
+        </div>
+        <div>
+          <h3>보드 카드</h3>
+          <div id="boardSlots" class="slots"></div>
+        </div>
+      </div>
+
+      <div class="grid-two">
+        <label>
+          분석 모드
+          <select id="mode">
+            <option value="hybrid">하이브리드 (시뮬레이션 + 로컬 GTO 프리셋)</option>
+            <option value="solver">외부 GTO 솔버 API 우선</option>
+          </select>
+        </label>
+
+        <label>
+          외부 GTO 솔버 API URL (선택)
+          <input id="solverUrl" type="text" placeholder="https://your-solver/api/decision" />
+        </label>
+      </div>
+
+      <button id="runBtn">확률 계산하기</button>
+      <p id="error" class="error"></p>
+    </section>
+
+    <section class="panel result">
+      <h2>결과</h2>
+      <div class="metric"><span>예상 승률</span><strong id="equity">-</strong></div>
+      <div class="metric"><span>무승부율</span><strong id="tie">-</strong></div>
+      <div class="metric"><span>추천 액션</span><strong id="action">-</strong></div>
+      <div class="metric"><span>액션 믹스</span><strong id="mix">-</strong></div>
+      <div class="metric"><span>결과 출처</span><strong id="source">-</strong></div>
+      <small>※ 외부 솔버 URL을 입력하면 API 응답을 우선 사용하고, 실패 시 로컬 계산으로 자동 폴백합니다.</small>
+    </section>
+  </main>
+
+  <dialog id="cardDialog">
+    <form method="dialog" class="dialog-header">
+      <h3 id="dialogTitle">카드 선택</h3>
+      <button value="cancel" class="ghost">닫기</button>
+    </form>
+    <div id="deckGrid" class="deck-grid"></div>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

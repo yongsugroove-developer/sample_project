@@ -8,6 +8,30 @@ const SUITS = ['s', 'h', 'd', 'c'];
 const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
 const HISTORY_KEY = 'gtoEquityHistory';
 const MAX_HISTORY = 8;
+let historyResetWarningShown = false;
+const FIELD_VALIDATION_RULES = [
+  {
+    id: 'potOdds',
+    min: 0,
+    max: 100,
+    label: 'Pot odds',
+  },
+  {
+    id: 'stackBb',
+    min: 5,
+    max: 300,
+    label: 'Effective stack',
+  },
+  {
+    id: 'betSize',
+    min: 0,
+    max: 200,
+    label: 'Bet size',
+  },
+];
+const SOLVER_TIMEOUT_MS = 5000;
+const SOLVER_MAX_ATTEMPTS = 2;
+const SOLVER_RETRY_BACKOFF_MS = 350;
 
 const state = {
   hero: [null, null],
@@ -142,29 +166,29 @@ function parseQuickInput(value, street) {
   const heroTokens = (parts[0] || '').trim().split(/\s+/).filter(Boolean);
   const boardTokens = (parts[1] || '').trim().split(/\s+/).filter(Boolean);
 
-  if (heroTokens.length !== 2) throw new Error('빠른 입력: 히어로 카드는 정확히 2장이어야 합니다.');
+  if (heroTokens.length !== 2) throw new Error('Quick input: hero cards must be exactly 2 cards.');
 
   const parsedHero = heroTokens.map(parseSingleCard);
-  if (parsedHero.some((c) => !c)) throw new Error('빠른 입력: 히어로 카드 표기 오류가 있습니다. 예) As Kd');
+  if (parsedHero.some((c) => !c)) throw new Error('Quick input: invalid hero card format. Ex: As Kd');
 
   const requiredBoard = streetBoardCount(street);
   if (boardTokens.length !== requiredBoard) {
-    throw new Error(`빠른 입력: ${street} 보드는 ${requiredBoard}장이어야 합니다.`);
+    throw new Error(`Quick input: ${street} board must contain ${requiredBoard} cards.`);
   }
 
   const parsedBoard = boardTokens.map(parseSingleCard);
-  if (parsedBoard.some((c) => !c)) throw new Error('빠른 입력: 보드 카드 표기 오류가 있습니다. 예) Qh Jh 2c');
+  if (parsedBoard.some((c) => !c)) throw new Error('Quick input: invalid board card format. Ex: Qh Jh 2c');
 
   const allCards = [...parsedHero, ...parsedBoard];
-  if (new Set(allCards).size !== allCards.length) throw new Error('빠른 입력: 중복 카드가 있습니다.');
+  if (new Set(allCards).size !== allCards.length) throw new Error('Quick input: duplicate cards are not allowed.');
 
   return { hero: parsedHero, board: parsedBoard };
 }
 
 function updateSlotA11y(el, type, index, card) {
-  const base = type === 'hero' ? `핸드 ${index + 1}` : `보드 ${index + 1}`;
-  const desc = card ? `${base}: ${card} 선택됨` : `${base}: 비어 있음`;
-  el.setAttribute('aria-label', `${desc}. 클릭하여 카드 선택, 제거 버튼으로 비우기.`);
+  const base = type === 'hero' ? `Hero ${index + 1}` : `Board ${index + 1}`;
+  const desc = card ? `${base}: ${card} selected` : `${base}: empty`;
+  el.setAttribute('aria-label', `${desc}. Click to select a card, use remove button to clear.`);
 }
 
 function createClearButton(type, index) {
@@ -172,7 +196,7 @@ function createClearButton(type, index) {
   clearBtn.type = 'button';
   clearBtn.className = 'slot-clear';
   clearBtn.textContent = '×';
-  clearBtn.setAttribute('aria-label', `${type === 'hero' ? '핸드' : '보드'} ${index + 1} 카드 삭제`);
+  clearBtn.setAttribute('aria-label', `${type === 'hero' ? 'Hero' : 'Board'} ${index + 1} card clear`);
   clearBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (type === 'hero') state.hero[index] = null;
@@ -189,29 +213,37 @@ function renderSlots() {
   heroSlots.innerHTML = '';
   boardSlots.innerHTML = '';
 
-  for (let i = 0; i < 2; i += 1) heroSlots.appendChild(createSlot('hero', i, state.hero[i]));
-  for (let i = 0; i < 5; i += 1) boardSlots.appendChild(createSlot('board', i, state.board[i]));
-
   const street = document.getElementById('street').value;
   const boardCount = streetBoardCount(street);
-  [...boardSlots.children].forEach((slotEl, idx) => {
-    slotEl.style.opacity = idx < boardCount ? '1' : '.35';
-    slotEl.classList.toggle('clickable', idx < boardCount);
-  });
+
+  for (let i = 0; i < 2; i += 1) heroSlots.appendChild(createSlot('hero', i, state.hero[i]));
+  for (let i = 0; i < 5; i += 1) {
+    const isInteractive = i < boardCount;
+    const slotEl = createSlot('board', i, state.board[i], isInteractive);
+    slotEl.style.opacity = isInteractive ? '1' : '.35';
+    boardSlots.appendChild(slotEl);
+  }
 }
 
-function createSlot(type, index, card) {
+function createSlot(type, index, card, isInteractive = true) {
   const el = document.createElement('button');
   el.type = 'button';
-  el.className = `slot ${card ? 'filled' : ''} clickable`;
+  el.className = `slot ${card ? 'filled' : ''} ${isInteractive ? 'clickable' : ''}`.trim();
   if (card) {
-    el.innerHTML = `<img src='${cardImagePath(card)}' alt='${card}' /><small>${card} (클릭해서 변경)</small>`;
-    el.appendChild(createClearButton(type, index));
+    el.innerHTML = `<img src='${cardImagePath(card)}' alt='${card}' /><small>${card} (click to change)</small>`;
+    if (isInteractive) el.appendChild(createClearButton(type, index));
   } else {
-    el.textContent = type === 'hero' ? `핸드 ${index + 1}` : `보드 ${index + 1}`;
+    el.textContent = type === 'hero' ? `Hero ${index + 1}` : `Board ${index + 1}`;
   }
 
   updateSlotA11y(el, type, index, card);
+
+  if (!isInteractive) {
+    el.disabled = true;
+    el.setAttribute('aria-disabled', 'true');
+    el.tabIndex = -1;
+    return el;
+  }
 
   el.addEventListener('click', () => {
     const street = document.getElementById('street').value;
@@ -234,7 +266,7 @@ function createSlot(type, index, card) {
 function openDeckDialog(type, index) {
   state.selecting = { type, index };
   const dialog = document.getElementById('cardDialog');
-  document.getElementById('dialogTitle').textContent = `${type === 'hero' ? '핸드' : '보드'} ${index + 1} 카드 선택`;
+  document.getElementById('dialogTitle').textContent = `${type === 'hero' ? 'Hero' : 'Board'} ${index + 1} Select Card`;
 
   const used = getUsedCards();
   const deckGrid = document.getElementById('deckGrid');
@@ -245,7 +277,7 @@ function openDeckDialog(type, index) {
     btn.type = 'button';
     btn.className = `deck-card ${used.includes(card) ? 'used' : ''}`;
     btn.disabled = used.includes(card);
-    btn.setAttribute('aria-label', `카드 ${card} 선택`);
+    btn.setAttribute('aria-label', `Select card ${card}`);
     btn.innerHTML = `<img src='${cardImagePath(card)}' alt='${card}' />`;
     btn.addEventListener('click', () => assignCard(card));
     deckGrid.appendChild(btn);
@@ -285,7 +317,7 @@ function localGtoPreset(hero, street) {
   };
 
   if (street === 'preflop' && preflop[key]) {
-    return { action: '프리플랍 GTO 프리셋', mix: preflop[key], source: `로컬 프리셋(${key})` };
+    return { action: 'preflop GTO preset', mix: preflop[key], source: `local preset (${key})` };
   }
   return null;
 }
@@ -304,11 +336,11 @@ function expandRangeToken(token) {
   }
 
   const match = core.match(/^([2-9TJQKA])([2-9TJQKA])(s|o)$/);
-  if (!match) throw new Error(`레인지 토큰 파싱 실패: ${token}`);
+  if (!match) throw new Error(`Range token parse failed: ${token}`);
   const [, hi, lo, suitedFlag] = match;
   const hiIdx = RANKS.indexOf(hi);
   const loIdx = RANKS.indexOf(lo);
-  if (hiIdx <= loIdx) throw new Error(`레인지 표기 오류(높은 랭크 먼저): ${token}`);
+  if (hiIdx <= loIdx) throw new Error(`Range format error (high rank must come first): ${token}`);
 
   if (!plus) return [`${hi}${lo}${suitedFlag}`];
 
@@ -377,6 +409,109 @@ function takeRandomRangeCombo(rangeCombos, blocked) {
   return candidates[Math.floor(Math.random() * candidates.length)];
 }
 
+function clampPercent(value) {
+  return Math.min(100, Math.max(0, value));
+}
+
+function normalizeMixRatios(raise, call, fold) {
+  const entries = [
+    { key: 'raise', value: clampPercent(Number.isFinite(raise) ? raise : 0) },
+    { key: 'call', value: clampPercent(Number.isFinite(call) ? call : 0) },
+    { key: 'fold', value: clampPercent(Number.isFinite(fold) ? fold : 0) },
+  ];
+
+  const total = entries.reduce((sum, entry) => sum + entry.value, 0);
+  if (total <= 0) return { raise: 0, call: 0, fold: 100 };
+
+  const scaled = entries.map((entry) => {
+    const exact = (entry.value / total) * 100;
+    return { ...entry, floor: Math.floor(exact), fraction: exact - Math.floor(exact) };
+  });
+
+  const normalized = {
+    raise: scaled.find((entry) => entry.key === 'raise').floor,
+    call: scaled.find((entry) => entry.key === 'call').floor,
+    fold: scaled.find((entry) => entry.key === 'fold').floor,
+  };
+
+  const floorTotal = normalized.raise + normalized.call + normalized.fold;
+  const remainder = 100 - floorTotal;
+  const byFraction = [...scaled].sort((a, b) => b.fraction - a.fraction || b.value - a.value);
+
+  for (let i = 0; i < remainder; i += 1) {
+    const key = byFraction[i % byFraction.length].key;
+    normalized[key] += 1;
+  }
+
+  return normalized;
+}
+
+function formatMixRatios(mix) {
+  return `Raise ${mix.raise}% / Call ${mix.call}% / Fold ${mix.fold}%`;
+}
+
+function setFieldValidationUi(inputEl, errorEl, message) {
+  const hasError = Boolean(message);
+  inputEl.classList.toggle('invalid', hasError);
+  inputEl.setAttribute('aria-invalid', hasError ? 'true' : 'false');
+
+  if (errorEl) {
+    errorEl.textContent = hasError ? message : '';
+    errorEl.hidden = !hasError;
+  }
+}
+
+function validateNumericInputField(rule) {
+  const inputEl = document.getElementById(rule.id);
+  if (!inputEl) return true;
+
+  const errorEl = document.getElementById(`${rule.id}Error`);
+  const raw = inputEl.value.trim();
+  let message = '';
+
+  if (!raw) {
+    message = `${rule.label} is required.`;
+  } else {
+    const value = Number(raw);
+    if (!Number.isFinite(value)) {
+      message = `${rule.label} must be a number.`;
+    } else if (value < rule.min || value > rule.max) {
+      message = `${rule.label} must be between ${rule.min} and ${rule.max}.`;
+    }
+  }
+
+  setFieldValidationUi(inputEl, errorEl, message);
+  return !message;
+}
+
+function validateScenarioInputs({ focusFirstInvalid = false } = {}) {
+  let isValid = true;
+  let firstInvalidEl = null;
+
+  for (const rule of FIELD_VALIDATION_RULES) {
+    const valid = validateNumericInputField(rule);
+    if (!valid) {
+      isValid = false;
+      if (!firstInvalidEl) firstInvalidEl = document.getElementById(rule.id);
+    }
+  }
+
+  if (!isValid && focusFirstInvalid && firstInvalidEl) firstInvalidEl.focus();
+  return isValid;
+}
+
+function bindRealtimeValidation() {
+  for (const rule of FIELD_VALIDATION_RULES) {
+    const inputEl = document.getElementById(rule.id);
+    if (!inputEl) continue;
+
+    const validate = () => validateNumericInputField(rule);
+    inputEl.addEventListener('input', validate);
+    inputEl.addEventListener('change', validate);
+    validate();
+  }
+}
+
 function recommendHeuristic({ equity, potOdds, street, position, stackBb, betSize }) {
   const pressureByStreet = { preflop: 0.05, flop: 0.02, turn: 0, river: -0.02 };
   const positionAdj = position === 'oop' ? 0.03 : -0.01;
@@ -389,31 +524,67 @@ function recommendHeuristic({ equity, potOdds, street, position, stackBb, betSiz
   if (equity >= raiseLine) {
     const raiseRatio = Math.min(85, Math.round((equity - adjustedCallLine) * 140));
     const callRatio = Math.max(10, 100 - raiseRatio - 5);
+    const mix = normalizeMixRatios(raiseRatio, callRatio, 100 - raiseRatio - callRatio);
     return {
-      action: '밸류 레이즈 / 공격적 플레이',
-      mix: `Raise ${raiseRatio}% / Call ${callRatio}% / Fold ${100 - raiseRatio - callRatio}%`,
-      reason: `필요 승률 ${(adjustedCallLine * 100).toFixed(1)}% 대비 추정 ${(equity * 100).toFixed(1)}%로 충분한 우위입니다.`,
+      action: 'value betting / aggressive play',
+      mix: formatMixRatios(mix),
+      reason: `Required equity ${(adjustedCallLine * 100).toFixed(1)}%, estimated ${(equity * 100).toFixed(1)}% gives enough edge.`,
     };
   }
   if (equity >= adjustedCallLine) {
     const callRatio = Math.min(80, Math.round(55 + (equity - adjustedCallLine) * 120));
     const raiseRatio = Math.max(5, Math.round((equity - adjustedCallLine) * 40));
+    const mix = normalizeMixRatios(raiseRatio, callRatio, 100 - raiseRatio - callRatio);
     return {
-      action: '콜 중심',
-      mix: `Raise ${raiseRatio}% / Call ${callRatio}% / Fold ${100 - raiseRatio - callRatio}%`,
-      reason: `브레이크이븐 라인 ${(adjustedCallLine * 100).toFixed(1)}%를 소폭 상회합니다.`,
+      action: 'call-focused',
+      mix: formatMixRatios(mix),
+      reason: `Near break-even line ${(adjustedCallLine * 100).toFixed(1)}% with playable margin.`,
     };
   }
   const foldRatio = Math.min(95, Math.round((adjustedCallLine - equity) * 170 + 40));
   const callRatio = Math.max(5, 100 - foldRatio - 5);
+  const mix = normalizeMixRatios(5, callRatio, foldRatio);
   return {
-    action: '폴드 우선',
-    mix: `Raise 5% / Call ${callRatio}% / Fold ${foldRatio}%`,
-    reason: `필요 승률 ${(adjustedCallLine * 100).toFixed(1)}%보다 추정 승률이 낮습니다.`,
+    action: 'fold-leaning',
+    mix: formatMixRatios(mix),
+    reason: `Required equity ${(adjustedCallLine * 100).toFixed(1)}% is above estimated equity.`,
   };
 }
 
-function monteCarloEquity({ hero, board, opponents, iterations, villainRange }) {
+function yieldToBrowser() {
+  return new Promise((resolve) => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createSolverError(message, code, retryable) {
+  const err = new Error(message);
+  err.code = code;
+  err.retryable = retryable;
+  return err;
+}
+
+async function monteCarloEquity({
+  hero,
+  board,
+  opponents,
+  iterations,
+  villainRange,
+  chunkSize = 500,
+  onProgress = null,
+}) {
+  if (!Number.isFinite(iterations) || iterations <= 0) {
+    return { tieRate: 0, equity: 0, ciLow: 0, ciHigh: 0, usedRange: false };
+  }
+
   let win = 0;
   let tie = 0;
   let usedRange = false;
@@ -421,6 +592,7 @@ function monteCarloEquity({ hero, board, opponents, iterations, villainRange }) 
   const deck = makeDeck().filter((c) => !used.includes(c));
   const deadCards = new Set(used);
   const rangeCombos = parseRangeToCombos(villainRange, deadCards);
+  const safeChunkSize = Math.max(1, Math.min(iterations, Math.floor(chunkSize)));
 
   for (let n = 0; n < iterations; n += 1) {
     const remainBoard = 5 - board.length;
@@ -464,6 +636,14 @@ function monteCarloEquity({ hero, board, opponents, iterations, villainRange }) 
 
     if (!betterExists && tieExists) tie += 1;
     else if (!betterExists) win += 1;
+
+    const completed = n + 1;
+    const reachedChunkBoundary = completed % safeChunkSize === 0 || completed === iterations;
+    if (reachedChunkBoundary) {
+      const progressPercent = (completed / iterations) * 100;
+      if (onProgress) onProgress(progressPercent, completed, iterations);
+      if (completed < iterations) await yieldToBrowser();
+    }
   }
 
   const equity = (win + tie * 0.5) / iterations;
@@ -476,18 +656,134 @@ function monteCarloEquity({ hero, board, opponents, iterations, villainRange }) 
 }
 
 async function requestExternalSolver(payload, solverUrl) {
-  const res = await fetch(solverUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`Solver API 오류: ${res.status}`);
-  return res.json();
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= SOLVER_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), SOLVER_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(solverUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const is5xx = res.status >= 500 && res.status < 600;
+        throw createSolverError(`Solver API HTTP ${res.status}`, is5xx ? 'SOLVER_HTTP_5XX' : 'SOLVER_HTTP_4XX', is5xx);
+      }
+
+      return res.json();
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        lastError = createSolverError(`Solver request timed out after ${SOLVER_TIMEOUT_MS}ms`, 'SOLVER_TIMEOUT', true);
+      } else if (err && err.retryable) {
+        lastError = err;
+      } else if (err instanceof TypeError) {
+        lastError = createSolverError(`Solver network error: ${err.message || 'Request failed'}`, 'SOLVER_NETWORK', true);
+      } else {
+        lastError = err instanceof Error ? err : new Error(String(err));
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!lastError || !lastError.retryable || attempt >= SOLVER_MAX_ATTEMPTS) break;
+    await sleep(SOLVER_RETRY_BACKOFF_MS * attempt);
+  }
+
+  throw lastError || new Error('Solver request failed.');
+}
+
+function showHistoryResetWarningOnce() {
+  if (historyResetWarningShown) return;
+  historyResetWarningShown = true;
+  const errorEl = document.getElementById('error');
+  if (errorEl) errorEl.textContent = 'Stored history was corrupted and has been reset.';
+}
+
+function resetCorruptedHistory() {
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch (_err) {
+    // no-op
+  }
+  showHistoryResetWarningOnce();
+  return [];
+}
+
+function normalizeHistoryEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+
+  const street = entry.street;
+  if (!['preflop', 'flop', 'turn', 'river'].includes(street)) return null;
+
+  if (!Array.isArray(entry.hero) || entry.hero.length !== 2) return null;
+  if (!Array.isArray(entry.board) || entry.board.length !== streetBoardCount(street) || entry.board.length > 5) return null;
+
+  const hero = entry.hero.map((card) => parseSingleCard(String(card || '')));
+  const board = entry.board.map((card) => parseSingleCard(String(card || '')));
+  if (hero.some((card) => !card) || board.some((card) => !card)) return null;
+
+  const allCards = [...hero, ...board];
+  if (new Set(allCards).size !== allCards.length) return null;
+
+  const opponents = Number(entry.opponents);
+  const potOdds = Number(entry.potOdds);
+  const iterations = Number(entry.iterations);
+  const position = entry.position;
+  const stackBb = Number(entry.stackBb);
+  const betSize = Number(entry.betSize);
+
+  if (!Number.isInteger(opponents) || opponents < 1 || opponents > 8) return null;
+  if (!Number.isFinite(potOdds) || potOdds < 0 || potOdds > 100) return null;
+  if (!Number.isInteger(iterations) || iterations < 500 || iterations > 50000) return null;
+  if (typeof entry.villainRange !== 'string') return null;
+  if (position !== 'ip' && position !== 'oop') return null;
+  if (!Number.isFinite(stackBb) || stackBb < 5 || stackBb > 300) return null;
+  if (!Number.isFinite(betSize) || betSize < 0 || betSize > 200) return null;
+
+  return {
+    street,
+    hero,
+    board,
+    opponents,
+    potOdds,
+    iterations,
+    villainRange: entry.villainRange,
+    position,
+    stackBb,
+    betSize,
+  };
+}
+
+function readHistorySafely() {
+  const raw = localStorage.getItem(HISTORY_KEY);
+  if (!raw) return [];
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (_err) {
+    return resetCorruptedHistory();
+  }
+
+  if (!Array.isArray(parsed)) return resetCorruptedHistory();
+
+  const normalized = [];
+  for (const item of parsed) {
+    const safeItem = normalizeHistoryEntry(item);
+    if (!safeItem) return resetCorruptedHistory();
+    normalized.push(safeItem);
+  }
+
+  return normalized.slice(0, MAX_HISTORY);
 }
 
 function saveScenarioToHistory(payload) {
-  const raw = localStorage.getItem(HISTORY_KEY);
-  const history = raw ? JSON.parse(raw) : [];
+  const history = readHistorySafely();
   const serialized = JSON.stringify(payload);
   const deduped = history.filter((item) => JSON.stringify(item) !== serialized);
   deduped.unshift(payload);
@@ -497,9 +793,8 @@ function saveScenarioToHistory(payload) {
 
 function renderHistoryOptions() {
   const select = document.getElementById('historySelect');
-  const raw = localStorage.getItem(HISTORY_KEY);
-  const history = raw ? JSON.parse(raw) : [];
-  select.innerHTML = '<option value="">저장된 시나리오 선택</option>';
+  const history = readHistorySafely();
+  select.innerHTML = '<option value="">Select a saved scenario</option>';
 
   history.forEach((item, idx) => {
     const option = document.createElement('option');
@@ -510,8 +805,7 @@ function renderHistoryOptions() {
 }
 
 function loadScenarioFromHistory(index) {
-  const raw = localStorage.getItem(HISTORY_KEY);
-  const history = raw ? JSON.parse(raw) : [];
+  const history = readHistorySafely();
   const chosen = history[index];
   if (!chosen) return;
 
@@ -528,6 +822,7 @@ function loadScenarioFromHistory(index) {
   state.board = [...chosen.board, null, null, null, null, null].slice(0, 5);
   renderSlots();
   syncQuickInputFromState();
+  validateScenarioInputs();
 }
 
 function setMetricValue(el, text, status) {
@@ -536,7 +831,34 @@ function setMetricValue(el, text, status) {
   if (status) el.classList.add(status);
 }
 
+let isCalculating = false;
+const runBtnEl = document.getElementById('runBtn');
+const progressStatusEl = document.getElementById('progressStatus');
+const runBtnIdleLabel = runBtnEl ? runBtnEl.textContent : 'Run Calculation';
+
+function setCalculationUiState({ busy, progressPercent = 0, statusText = '' }) {
+  const safePercent = Math.max(0, Math.min(100, Math.round(progressPercent)));
+
+  if (runBtnEl) {
+    runBtnEl.disabled = busy;
+    runBtnEl.setAttribute('aria-disabled', busy ? 'true' : 'false');
+    runBtnEl.textContent = busy ? `${runBtnIdleLabel} (${safePercent}%)` : runBtnIdleLabel;
+  }
+
+  if (progressStatusEl) {
+    progressStatusEl.textContent = busy ? statusText : '';
+  }
+}
+
 async function runCalculation() {
+  if (isCalculating) return;
+  const errorEl = document.getElementById('error');
+  errorEl.textContent = '';
+  if (!validateScenarioInputs({ focusFirstInvalid: true })) return;
+
+  isCalculating = true;
+  setCalculationUiState({ busy: true, progressPercent: 0, statusText: 'Preparing calculation...' });
+
   const street = document.getElementById('street').value;
   const opponents = Number(document.getElementById('opponents').value);
   const potOdds = Number(document.getElementById('potOdds').value) / 100;
@@ -547,19 +869,32 @@ async function runCalculation() {
   const position = document.getElementById('heroPosition').value;
   const stackBb = Number(document.getElementById('stackBb').value);
   const betSize = Number(document.getElementById('betSize').value);
-  const errorEl = document.getElementById('error');
-  errorEl.textContent = '';
 
   try {
-    if (state.hero.some((c) => !c)) throw new Error('내 핸드 2장을 모두 선택해 주세요.');
+    if (state.hero.some((c) => !c)) throw new Error('Please select both hero cards.');
     const boardCount = streetBoardCount(street);
     const board = state.board.slice(0, boardCount);
-    if (board.length !== boardCount || board.some((c) => !c)) throw new Error(`${street}에 맞는 보드 카드를 선택해 주세요.`);
-    if (opponents < 1 || opponents > 8) throw new Error('상대 인원 수는 1~8만 허용됩니다.');
-    if (iterations < 500 || iterations > 50000) throw new Error('시뮬레이션 횟수는 500~50000 범위여야 합니다.');
+    if (board.length !== boardCount || board.some((c) => !c)) throw new Error(`Please select board cards for ${street}.`);
+    if (opponents < 1 || opponents > 8) throw new Error('Opponent count must be between 1 and 8.');
+    if (iterations < 500 || iterations > 50000) throw new Error('Simulation iterations must be between 500 and 50000.');
 
     const hero = state.hero;
-    const sim = monteCarloEquity({ hero, board, opponents, iterations, villainRange });
+    const sim = await monteCarloEquity({
+      hero,
+      board,
+      opponents,
+      iterations,
+      villainRange,
+      chunkSize: Math.max(200, Math.floor(iterations / 50)),
+      onProgress: (progressPercent, completed, total) => {
+        setCalculationUiState({
+          busy: true,
+          progressPercent,
+          statusText: `Simulation in progress... ${completed}/${total} (${Math.round(progressPercent)}%)`,
+        });
+      },
+    });
+    setCalculationUiState({ busy: true, progressPercent: 100, statusText: 'Simulation complete. Finalizing results...' });
     let action = null;
     let source = '로컬 계산';
 
@@ -580,22 +915,22 @@ async function runCalculation() {
         action = {
           action: solver.action || 'Solver Action',
           mix: solver.mix || '-',
-          reason: solver.reason || '외부 솔버 응답을 사용했습니다.',
+          reason: solver.reason || 'Used response from external solver.',
         };
-        source = '외부 GTO Solver API';
+        source = 'External GTO Solver API';
       } catch (solverErr) {
-        errorEl.textContent = `솔버 연동 실패, 로컬 결과로 폴백: ${solverErr.message}`;
+        errorEl.textContent = `Solver request failed, using local fallback: ${solverErr.message}`;
       }
     }
 
     if (!action) {
       const preset = localGtoPreset(hero, street);
       if (preset) {
-        action = { action: preset.action, mix: preset.mix, reason: `프리플랍 프리셋(${preset.source}) 매칭 결과입니다.` };
+        action = { action: preset.action, mix: preset.mix, reason: `Chart match result (${preset.source}).` };
         source = preset.source;
       } else {
         action = recommendHeuristic({ equity: sim.equity, potOdds, street, position, stackBb, betSize });
-        source = '로컬 시뮬레이션 + 컨텍스트 휴리스틱';
+        source = 'Local simulation + context heuristic';
       }
     }
 
@@ -611,7 +946,7 @@ async function runCalculation() {
     document.getElementById('ci').textContent = `${(sim.ciLow * 100).toFixed(2)}% ~ ${(sim.ciHigh * 100).toFixed(2)}%`;
     document.getElementById('action').textContent = action.action;
     document.getElementById('mix').textContent = action.mix;
-    document.getElementById('reason').textContent = `최소 ${(breakEven * 100).toFixed(1)}% 필요, 추정 ${(sim.equity * 100).toFixed(1)}%. ${action.reason}`;
+    document.getElementById('reason').textContent = `Need at least ${(breakEven * 100).toFixed(1)}%, estimated ${(sim.equity * 100).toFixed(1)}%. ${action.reason}`;
     document.getElementById('samplingMode').textContent = sim.usedRange ? 'Range-weighted' : 'Uniform';
     document.getElementById('source').textContent = source;
 
@@ -631,6 +966,9 @@ async function runCalculation() {
     });
   } catch (err) {
     errorEl.textContent = err.message || String(err);
+  } finally {
+    isCalculating = false;
+    setCalculationUiState({ busy: false });
   }
 }
 
@@ -642,7 +980,7 @@ document.getElementById('street').addEventListener('change', () => {
   syncQuickInputFromState();
 });
 
-document.getElementById('runBtn').addEventListener('click', runCalculation);
+if (runBtnEl) runBtnEl.addEventListener('click', runCalculation);
 
 document.getElementById('quickInput').addEventListener('change', (e) => {
   const errorEl = document.getElementById('error');
@@ -674,6 +1012,10 @@ document.getElementById('cardDialog').addEventListener('close', () => {
   if (state.lastFocusedSlot) state.lastFocusedSlot.focus();
 });
 
+bindRealtimeValidation();
 renderHistoryOptions();
 renderSlots();
 syncQuickInputFromState();
+
+
+

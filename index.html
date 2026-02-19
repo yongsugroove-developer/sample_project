@@ -31,7 +31,8 @@
 
         <label>
           팟 오즈 % (콜에 필요한 최소 승률)
-          <input id="potOdds" type="number" min="0" max="100" value="33" />
+          <input id="potOdds" type="number" min="0" max="100" value="33" aria-describedby="potOddsError" />
+          <small id="potOddsError" class="field-error" aria-live="polite" hidden></small>
         </label>
 
         <label>
@@ -67,12 +68,14 @@
 
         <label>
           유효 스택 (bb)
-          <input id="stackBb" type="number" min="5" max="300" value="100" />
+          <input id="stackBb" type="number" min="5" max="300" value="100" aria-describedby="stackBbError" />
+          <small id="stackBbError" class="field-error" aria-live="polite" hidden></small>
         </label>
 
         <label>
           현재 베팅 사이즈 (% Pot)
-          <input id="betSize" type="number" min="0" max="200" value="66" />
+          <input id="betSize" type="number" min="0" max="200" value="66" aria-describedby="betSizeError" />
+          <small id="betSizeError" class="field-error" aria-live="polite" hidden></small>
         </label>
       </div>
 
@@ -117,6 +120,7 @@
       </div>
 
       <button id="runBtn">확률 계산하기</button>
+      <p id="progressStatus" class="status" role="status" aria-live="polite"></p>
       <p id="error" class="error" aria-live="polite"></p>
     </section>
 

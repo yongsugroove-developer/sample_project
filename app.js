@@ -33,6 +33,44 @@ const SOLVER_TIMEOUT_MS = 5000;
 const SOLVER_MAX_ATTEMPTS = 2;
 const SOLVER_RETRY_BACKOFF_MS = 350;
 
+const $els = {
+  street: $('#street'),
+  opponents: $('#opponents'),
+  potOdds: $('#potOdds'),
+  potOddsError: $('#potOddsError'),
+  iterations: $('#iterations'),
+  villainRange: $('#villainRange'),
+  heroPosition: $('#heroPosition'),
+  stackBb: $('#stackBb'),
+  stackBbError: $('#stackBbError'),
+  betSize: $('#betSize'),
+  betSizeError: $('#betSizeError'),
+  heroSlots: $('#heroSlots'),
+  boardSlots: $('#boardSlots'),
+  quickInput: $('#quickInput'),
+  historySelect: $('#historySelect'),
+  mode: $('#mode'),
+  solverUrl: $('#solverUrl'),
+  runBtn: $('#runBtn'),
+  progressStatus: $('#progressStatus'),
+  error: $('#error'),
+  equity: $('#equity'),
+  tie: $('#tie'),
+  breakEven: $('#breakEven'),
+  edge: $('#edge'),
+  ev: $('#ev'),
+  ci: $('#ci'),
+  action: $('#action'),
+  mix: $('#mix'),
+  reason: $('#reason'),
+  samplingMode: $('#samplingMode'),
+  source: $('#source'),
+  precisionBadge: $('#precisionBadge'),
+  cardDialog: $('#cardDialog'),
+  dialogTitle: $('#dialogTitle'),
+  deckGrid: $('#deckGrid'),
+};
+
 const state = {
   hero: [null, null],
   board: [null, null, null, null, null],
@@ -158,7 +196,7 @@ function cardsToQuickText() {
 }
 
 function syncQuickInputFromState() {
-  document.getElementById('quickInput').value = cardsToQuickText();
+  $els.quickInput.val(cardsToQuickText());
 }
 
 function parseQuickInput(value, street) {
@@ -185,114 +223,143 @@ function parseQuickInput(value, street) {
   return { hero: parsedHero, board: parsedBoard };
 }
 
-function updateSlotA11y(el, type, index, card) {
+function clearSlotCard(type, index) {
+  if (type === 'hero') state.hero[index] = null;
+  else state.board[index] = null;
+}
+
+function updateSlotA11y($el, type, index, card, isInteractive) {
   const base = type === 'hero' ? `Hero ${index + 1}` : `Board ${index + 1}`;
   const desc = card ? `${base}: ${card} selected` : `${base}: empty`;
-  el.setAttribute('aria-label', `${desc}. Click to select a card, use remove button to clear.`);
+  if (!isInteractive) {
+    $el.attr('aria-label', `${desc}. Disabled for this street.`);
+    return;
+  }
+
+  const clearHint = card ? ' Use remove button to clear.' : '';
+  $el.attr('aria-label', `${desc}. Click to select a card.${clearHint}`);
 }
 
 function createClearButton(type, index) {
-  const clearBtn = document.createElement('button');
-  clearBtn.type = 'button';
-  clearBtn.className = 'slot-clear';
-  clearBtn.textContent = '×';
-  clearBtn.setAttribute('aria-label', `${type === 'hero' ? 'Hero' : 'Board'} ${index + 1} card clear`);
-  clearBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (type === 'hero') state.hero[index] = null;
-    else state.board[index] = null;
+  const labelPrefix = type === 'hero' ? 'Hero' : 'Board';
+  const $clearBtn = $('<button>', {
+    type: 'button',
+    class: 'slot-clear',
+    text: 'x',
+  });
+  $clearBtn.attr('aria-label', `${labelPrefix} ${index + 1} card clear`);
+  $clearBtn.on('click', (event) => {
+    event.preventDefault();
+    clearSlotCard(type, index);
     renderSlots();
     syncQuickInputFromState();
+    const selector = `.slot[data-slot-type="${type}"][data-slot-index="${index}"]`;
+    const $nextSlot = type === 'hero'
+      ? $els.heroSlots.find(selector).first()
+      : $els.boardSlots.find(selector).first();
+    if ($nextSlot.length) $nextSlot.trigger('focus');
   });
-  return clearBtn;
+  return $clearBtn;
 }
 
 function renderSlots() {
-  const heroSlots = document.getElementById('heroSlots');
-  const boardSlots = document.getElementById('boardSlots');
-  heroSlots.innerHTML = '';
-  boardSlots.innerHTML = '';
+  $els.heroSlots.empty();
+  $els.boardSlots.empty();
 
-  const street = document.getElementById('street').value;
+  const street = String($els.street.val());
   const boardCount = streetBoardCount(street);
 
-  for (let i = 0; i < 2; i += 1) heroSlots.appendChild(createSlot('hero', i, state.hero[i]));
+  for (let i = 0; i < 2; i += 1) $els.heroSlots.append(createSlot('hero', i, state.hero[i]));
   for (let i = 0; i < 5; i += 1) {
     const isInteractive = i < boardCount;
-    const slotEl = createSlot('board', i, state.board[i], isInteractive);
-    slotEl.style.opacity = isInteractive ? '1' : '.35';
-    boardSlots.appendChild(slotEl);
+    const $slotEl = createSlot('board', i, state.board[i], isInteractive);
+    $slotEl.css('opacity', isInteractive ? '1' : '.35');
+    $els.boardSlots.append($slotEl);
   }
 }
-
 function createSlot(type, index, card, isInteractive = true) {
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className = `slot ${card ? 'filled' : ''} ${isInteractive ? 'clickable' : ''}`.trim();
+  const classes = ['slot'];
+  if (card) classes.push('filled');
+  if (isInteractive) classes.push('clickable');
+
+  const $slotButton = $('<button>', {
+    type: 'button',
+    class: classes.join(' '),
+  });
+  $slotButton.attr('data-slot-type', type);
+  $slotButton.attr('data-slot-index', index);
+
   if (card) {
-    el.innerHTML = `<img src='${cardImagePath(card)}' alt='${card}' /><small>${card} (click to change)</small>`;
-    if (isInteractive) el.appendChild(createClearButton(type, index));
+    $slotButton.append(
+      $('<img>', { src: cardImagePath(card), alt: card }),
+      $('<small>').text(`${card} (click to change)`),
+    );
   } else {
-    el.textContent = type === 'hero' ? `Hero ${index + 1}` : `Board ${index + 1}`;
+    $slotButton.text(type === 'hero' ? `Hero ${index + 1}` : `Board ${index + 1}`);
   }
 
-  updateSlotA11y(el, type, index, card);
+  updateSlotA11y($slotButton, type, index, card, isInteractive);
+
+  const $slotContainer = $('<div>', { class: 'slot-wrap' });
+  $slotContainer.append($slotButton);
 
   if (!isInteractive) {
-    el.disabled = true;
-    el.setAttribute('aria-disabled', 'true');
-    el.tabIndex = -1;
-    return el;
+    $slotButton.prop('disabled', true);
+    $slotButton.attr('aria-disabled', 'true');
+    $slotButton.prop('tabIndex', -1);
+    return $slotContainer;
   }
 
-  el.addEventListener('click', () => {
-    const street = document.getElementById('street').value;
+  $slotButton.on('click', () => {
+    const street = String($els.street.val());
     if (type === 'board' && index >= streetBoardCount(street)) return;
-    state.lastFocusedSlot = el;
+    state.lastFocusedSlot = $slotButton.get(0);
     openDeckDialog(type, index);
   });
 
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    if (type === 'hero') state.hero[index] = null;
-    else state.board[index] = null;
+  $slotButton.on('contextmenu', (event) => {
+    event.preventDefault();
+    clearSlotCard(type, index);
     renderSlots();
     syncQuickInputFromState();
   });
 
-  return el;
+  if (card) $slotContainer.append(createClearButton(type, index));
+  return $slotContainer;
 }
-
 function openDeckDialog(type, index) {
   state.selecting = { type, index };
-  const dialog = document.getElementById('cardDialog');
-  document.getElementById('dialogTitle').textContent = `${type === 'hero' ? 'Hero' : 'Board'} ${index + 1} Select Card`;
+  $els.dialogTitle.text(`${type === 'hero' ? 'Hero' : 'Board'} ${index + 1} Select Card`);
 
-  const used = getUsedCards();
-  const deckGrid = document.getElementById('deckGrid');
-  deckGrid.innerHTML = '';
+  const used = new Set(getUsedCards());
+  $els.deckGrid.empty();
 
   for (const card of makeDeck()) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = `deck-card ${used.includes(card) ? 'used' : ''}`;
-    btn.disabled = used.includes(card);
-    btn.setAttribute('aria-label', `Select card ${card}`);
-    btn.innerHTML = `<img src='${cardImagePath(card)}' alt='${card}' />`;
-    btn.addEventListener('click', () => assignCard(card));
-    deckGrid.appendChild(btn);
+    const isUsed = used.has(card);
+    const $btn = $('<button>', {
+      type: 'button',
+      class: `deck-card${isUsed ? ' used' : ''}`,
+    });
+    $btn.prop('disabled', isUsed);
+    $btn.attr('aria-label', `Select card ${card}`);
+    $btn.attr('data-card', card);
+    $btn.append($('<img>', { src: cardImagePath(card), alt: card }));
+    $els.deckGrid.append($btn);
   }
 
-  dialog.showModal();
-  const firstEnabled = deckGrid.querySelector('button:not([disabled])');
-  if (firstEnabled) firstEnabled.focus();
-}
+  const dialogEl = $els.cardDialog.get(0);
+  if (dialogEl && typeof dialogEl.showModal === 'function') dialogEl.showModal();
 
+  const $firstEnabled = $els.deckGrid.find('button:not([disabled])').first();
+  if ($firstEnabled.length) $firstEnabled.trigger('focus');
+}
 function assignCard(card) {
+  if (!state.selecting) return;
   const { type, index } = state.selecting;
   if (type === 'hero') state.hero[index] = card;
   else state.board[index] = card;
-  document.getElementById('cardDialog').close();
+  const dialogEl = $els.cardDialog.get(0);
+  if (dialogEl && dialogEl.open && typeof dialogEl.close === 'function') dialogEl.close();
   renderSlots();
   syncQuickInputFromState();
 }
@@ -410,6 +477,7 @@ function takeRandomRangeCombo(rangeCombos, blocked) {
 }
 
 function clampPercent(value) {
+  if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, value));
 }
 
@@ -450,23 +518,58 @@ function formatMixRatios(mix) {
   return `Raise ${mix.raise}% / Call ${mix.call}% / Fold ${mix.fold}%`;
 }
 
-function setFieldValidationUi(inputEl, errorEl, message) {
-  const hasError = Boolean(message);
-  inputEl.classList.toggle('invalid', hasError);
-  inputEl.setAttribute('aria-invalid', hasError ? 'true' : 'false');
+function parseMixRatios(rawMix) {
+  const parsed = { raise: 0, call: 0, fold: 0 };
 
-  if (errorEl) {
-    errorEl.textContent = hasError ? message : '';
-    errorEl.hidden = !hasError;
+  if (typeof rawMix === 'string') {
+    const ratioRegex = /(raise|call|fold)\s*([0-9]+(?:\.[0-9]+)?)%/gi;
+    let match = ratioRegex.exec(rawMix);
+    while (match) {
+      const key = String(match[1]).toLowerCase();
+      parsed[key] = clampPercent(Number(match[2]));
+      match = ratioRegex.exec(rawMix);
+    }
+  } else if (rawMix && typeof rawMix === 'object') {
+    parsed.raise = clampPercent(Number(rawMix.raise));
+    parsed.call = clampPercent(Number(rawMix.call));
+    parsed.fold = clampPercent(Number(rawMix.fold));
+  }
+
+  return parsed;
+}
+
+function normalizeRecommendationMix(rawMix) {
+  const parsed = parseMixRatios(rawMix);
+  let { raise, call, fold } = parsed;
+  const total = raise + call + fold;
+
+  if (total <= 0) return { raise: 0, call: 0, fold: 100 };
+  if (total < 100) fold += 100 - total;
+
+  return normalizeMixRatios(raise, call, fold);
+}
+
+function formatRecommendationMix(rawMix) {
+  return formatMixRatios(normalizeRecommendationMix(rawMix));
+}
+
+function setFieldValidationUi($inputEl, $errorEl, message) {
+  const hasError = Boolean(message);
+  $inputEl.toggleClass('invalid', hasError);
+  $inputEl.attr('aria-invalid', hasError ? 'true' : 'false');
+
+  if ($errorEl && $errorEl.length) {
+    $errorEl.text(hasError ? message : '');
+    $errorEl.prop('hidden', !hasError);
   }
 }
 
 function validateNumericInputField(rule) {
-  const inputEl = document.getElementById(rule.id);
-  if (!inputEl) return true;
+  const $inputEl = $els[rule.id];
+  if (!$inputEl || !$inputEl.length) return true;
 
-  const errorEl = document.getElementById(`${rule.id}Error`);
-  const raw = inputEl.value.trim();
+  const $errorEl = $els[`${rule.id}Error`];
+  const raw = String($inputEl.val() || '').trim();
   let message = '';
 
   if (!raw) {
@@ -480,34 +583,34 @@ function validateNumericInputField(rule) {
     }
   }
 
-  setFieldValidationUi(inputEl, errorEl, message);
+  setFieldValidationUi($inputEl, $errorEl, message);
   return !message;
 }
 
 function validateScenarioInputs({ focusFirstInvalid = false } = {}) {
   let isValid = true;
-  let firstInvalidEl = null;
+  let $firstInvalidEl = null;
 
   for (const rule of FIELD_VALIDATION_RULES) {
     const valid = validateNumericInputField(rule);
     if (!valid) {
       isValid = false;
-      if (!firstInvalidEl) firstInvalidEl = document.getElementById(rule.id);
+      if (!$firstInvalidEl) $firstInvalidEl = $els[rule.id];
     }
   }
 
-  if (!isValid && focusFirstInvalid && firstInvalidEl) firstInvalidEl.focus();
+  if (!isValid && focusFirstInvalid && $firstInvalidEl && $firstInvalidEl.length) $firstInvalidEl.trigger('focus');
   return isValid;
 }
 
 function bindRealtimeValidation() {
   for (const rule of FIELD_VALIDATION_RULES) {
-    const inputEl = document.getElementById(rule.id);
-    if (!inputEl) continue;
+    const $inputEl = $els[rule.id];
+    if (!$inputEl || !$inputEl.length) continue;
 
     const validate = () => validateNumericInputField(rule);
-    inputEl.addEventListener('input', validate);
-    inputEl.addEventListener('change', validate);
+    $inputEl.on('input', validate);
+    $inputEl.on('change', validate);
     validate();
   }
 }
@@ -594,56 +697,58 @@ async function monteCarloEquity({
   const rangeCombos = parseRangeToCombos(villainRange, deadCards);
   const safeChunkSize = Math.max(1, Math.min(iterations, Math.floor(chunkSize)));
 
-  for (let n = 0; n < iterations; n += 1) {
-    const remainBoard = 5 - board.length;
-    const sampledVillains = [];
-    const blocked = new Set(used);
+  let completed = 0;
+  while (completed < iterations) {
+    const chunkEnd = Math.min(iterations, completed + safeChunkSize);
 
-    for (let p = 0; p < opponents; p += 1) {
-      let selected = null;
-      if (rangeCombos.length) {
-        selected = takeRandomRangeCombo(rangeCombos, blocked);
-        if (selected) usedRange = true;
-      }
-      if (!selected) {
-        const remaining = deck.filter((c) => !blocked.has(c));
-        if (remaining.length < 2) return { tieRate: 0, equity: 0, ciLow: 0, ciHigh: 0, usedRange: false };
-        selected = sampleWithoutReplacement(remaining, 2);
+    for (let n = completed; n < chunkEnd; n += 1) {
+      const remainBoard = 5 - board.length;
+      const sampledVillains = [];
+      const blocked = new Set(used);
+
+      for (let p = 0; p < opponents; p += 1) {
+        let selected = null;
+        if (rangeCombos.length) {
+          selected = takeRandomRangeCombo(rangeCombos, blocked);
+          if (selected) usedRange = true;
+        }
+        if (!selected) {
+          const remaining = deck.filter((c) => !blocked.has(c));
+          if (remaining.length < 2) return { tieRate: 0, equity: 0, ciLow: 0, ciHigh: 0, usedRange: false };
+          selected = sampleWithoutReplacement(remaining, 2);
+        }
+
+        blocked.add(selected[0]);
+        blocked.add(selected[1]);
+        sampledVillains.push(selected);
       }
 
-      blocked.add(selected[0]);
-      blocked.add(selected[1]);
-      sampledVillains.push(selected);
+      const remainDeck = deck.filter((c) => !blocked.has(c));
+      const boardSample = sampleWithoutReplacement(remainDeck, remainBoard);
+      const boardComplete = [...board, ...boardSample];
+
+      const heroScore = bestOfSeven([...hero, ...boardComplete]);
+      let betterExists = false;
+      let tieExists = false;
+
+      for (const villainCards of sampledVillains) {
+        const villainScore = bestOfSeven([...villainCards, ...boardComplete]);
+        const cmp = compareRanks(heroScore, villainScore);
+        if (cmp < 0) {
+          betterExists = true;
+          break;
+        }
+        if (cmp === 0) tieExists = true;
+      }
+
+      if (!betterExists && tieExists) tie += 1;
+      else if (!betterExists) win += 1;
     }
 
-    const remainDeck = deck.filter((c) => !blocked.has(c));
-    const boardSample = sampleWithoutReplacement(remainDeck, remainBoard);
-    const boardComplete = [...board, ...boardSample];
-
-    const heroScore = bestOfSeven([...hero, ...boardComplete]);
-    let betterExists = false;
-    let tieExists = false;
-
-    for (const villainCards of sampledVillains) {
-      const villainScore = bestOfSeven([...villainCards, ...boardComplete]);
-      const cmp = compareRanks(heroScore, villainScore);
-      if (cmp < 0) {
-        betterExists = true;
-        break;
-      }
-      if (cmp === 0) tieExists = true;
-    }
-
-    if (!betterExists && tieExists) tie += 1;
-    else if (!betterExists) win += 1;
-
-    const completed = n + 1;
-    const reachedChunkBoundary = completed % safeChunkSize === 0 || completed === iterations;
-    if (reachedChunkBoundary) {
-      const progressPercent = (completed / iterations) * 100;
-      if (onProgress) onProgress(progressPercent, completed, iterations);
-      if (completed < iterations) await yieldToBrowser();
-    }
+    completed = chunkEnd;
+    const progressPercent = (completed / iterations) * 100;
+    if (onProgress) onProgress(progressPercent, completed, iterations);
+    if (completed < iterations) await yieldToBrowser();
   }
 
   const equity = (win + tie * 0.5) / iterations;
@@ -700,8 +805,7 @@ async function requestExternalSolver(payload, solverUrl) {
 function showHistoryResetWarningOnce() {
   if (historyResetWarningShown) return;
   historyResetWarningShown = true;
-  const errorEl = document.getElementById('error');
-  if (errorEl) errorEl.textContent = 'Stored history was corrupted and has been reset.';
+  if ($els.error.length) $els.error.text('Stored history was corrupted and has been reset.');
 }
 
 function resetCorruptedHistory() {
@@ -792,15 +896,18 @@ function saveScenarioToHistory(payload) {
 }
 
 function renderHistoryOptions() {
-  const select = document.getElementById('historySelect');
   const history = readHistorySafely();
-  select.innerHTML = '<option value="">Select a saved scenario</option>';
+  $els.historySelect.empty();
+  $els.historySelect.append($('<option>', {
+    value: '',
+    text: 'Select a saved scenario',
+  }));
 
   history.forEach((item, idx) => {
-    const option = document.createElement('option');
-    option.value = String(idx);
-    option.textContent = `${item.street.toUpperCase()} | ${item.hero.join(' ')} | ${item.board.join(' ') || '-'}`;
-    select.appendChild(option);
+    $els.historySelect.append($('<option>', {
+      value: String(idx),
+      text: `${item.street.toUpperCase()} | ${item.hero.join(' ')} | ${item.board.join(' ') || '-'}`,
+    }));
   });
 }
 
@@ -809,14 +916,14 @@ function loadScenarioFromHistory(index) {
   const chosen = history[index];
   if (!chosen) return;
 
-  document.getElementById('street').value = chosen.street;
-  document.getElementById('opponents').value = chosen.opponents;
-  document.getElementById('potOdds').value = chosen.potOdds;
-  document.getElementById('iterations').value = chosen.iterations;
-  document.getElementById('villainRange').value = chosen.villainRange;
-  document.getElementById('heroPosition').value = chosen.position;
-  document.getElementById('stackBb').value = chosen.stackBb;
-  document.getElementById('betSize').value = chosen.betSize;
+  $els.street.val(chosen.street);
+  $els.opponents.val(chosen.opponents);
+  $els.potOdds.val(chosen.potOdds);
+  $els.iterations.val(chosen.iterations);
+  $els.villainRange.val(chosen.villainRange);
+  $els.heroPosition.val(chosen.position);
+  $els.stackBb.val(chosen.stackBb);
+  $els.betSize.val(chosen.betSize);
 
   state.hero = [...chosen.hero];
   state.board = [...chosen.board, null, null, null, null, null].slice(0, 5);
@@ -825,50 +932,47 @@ function loadScenarioFromHistory(index) {
   validateScenarioInputs();
 }
 
-function setMetricValue(el, text, status) {
-  el.textContent = text;
-  el.classList.remove('positive', 'neutral', 'negative');
-  if (status) el.classList.add(status);
+function setMetricValue($el, text, status) {
+  $el.text(text);
+  $el.removeClass('positive neutral negative');
+  if (status) $el.addClass(status);
 }
 
 let isCalculating = false;
-const runBtnEl = document.getElementById('runBtn');
-const progressStatusEl = document.getElementById('progressStatus');
-const runBtnIdleLabel = runBtnEl ? runBtnEl.textContent : 'Run Calculation';
+const runBtnIdleLabel = $els.runBtn.length ? String($els.runBtn.text()) : 'Run Calculation';
 
 function setCalculationUiState({ busy, progressPercent = 0, statusText = '' }) {
   const safePercent = Math.max(0, Math.min(100, Math.round(progressPercent)));
 
-  if (runBtnEl) {
-    runBtnEl.disabled = busy;
-    runBtnEl.setAttribute('aria-disabled', busy ? 'true' : 'false');
-    runBtnEl.textContent = busy ? `${runBtnIdleLabel} (${safePercent}%)` : runBtnIdleLabel;
+  if ($els.runBtn.length) {
+    $els.runBtn.prop('disabled', busy);
+    $els.runBtn.attr('aria-disabled', busy ? 'true' : 'false');
+    $els.runBtn.text(busy ? `${runBtnIdleLabel} (${safePercent}%)` : runBtnIdleLabel);
   }
 
-  if (progressStatusEl) {
-    progressStatusEl.textContent = busy ? statusText : '';
+  if ($els.progressStatus.length) {
+    $els.progressStatus.text(busy ? statusText : '');
   }
 }
 
 async function runCalculation() {
   if (isCalculating) return;
-  const errorEl = document.getElementById('error');
-  errorEl.textContent = '';
+  $els.error.text('');
   if (!validateScenarioInputs({ focusFirstInvalid: true })) return;
 
   isCalculating = true;
   setCalculationUiState({ busy: true, progressPercent: 0, statusText: 'Preparing calculation...' });
 
-  const street = document.getElementById('street').value;
-  const opponents = Number(document.getElementById('opponents').value);
-  const potOdds = Number(document.getElementById('potOdds').value) / 100;
-  const iterations = Number(document.getElementById('iterations').value);
-  const mode = document.getElementById('mode').value;
-  const solverUrl = document.getElementById('solverUrl').value.trim();
-  const villainRange = document.getElementById('villainRange').value.trim();
-  const position = document.getElementById('heroPosition').value;
-  const stackBb = Number(document.getElementById('stackBb').value);
-  const betSize = Number(document.getElementById('betSize').value);
+  const street = String($els.street.val());
+  const opponents = Number($els.opponents.val());
+  const potOdds = Number($els.potOdds.val()) / 100;
+  const iterations = Number($els.iterations.val());
+  const mode = String($els.mode.val());
+  const solverUrl = String($els.solverUrl.val() || '').trim();
+  const villainRange = String($els.villainRange.val() || '').trim();
+  const position = String($els.heroPosition.val());
+  const stackBb = Number($els.stackBb.val());
+  const betSize = Number($els.betSize.val());
 
   try {
     if (state.hero.some((c) => !c)) throw new Error('Please select both hero cards.');
@@ -878,14 +982,18 @@ async function runCalculation() {
     if (opponents < 1 || opponents > 8) throw new Error('Opponent count must be between 1 and 8.');
     if (iterations < 500 || iterations > 50000) throw new Error('Simulation iterations must be between 500 and 50000.');
 
-    const hero = state.hero;
+    const hero = [...state.hero];
+    const simulationChunkSize = Math.max(
+      50,
+      Math.min(400, Math.floor(iterations / Math.max(60, opponents * 20))),
+    );
     const sim = await monteCarloEquity({
       hero,
       board,
       opponents,
       iterations,
       villainRange,
-      chunkSize: Math.max(200, Math.floor(iterations / 50)),
+      chunkSize: simulationChunkSize,
       onProgress: (progressPercent, completed, total) => {
         setCalculationUiState({
           busy: true,
@@ -895,8 +1003,9 @@ async function runCalculation() {
       },
     });
     setCalculationUiState({ busy: true, progressPercent: 100, statusText: 'Simulation complete. Finalizing results...' });
+
     let action = null;
-    let source = '로컬 계산';
+    let source = 'Local simulation';
 
     if ((mode === 'solver' || solverUrl) && solverUrl) {
       try {
@@ -919,7 +1028,8 @@ async function runCalculation() {
         };
         source = 'External GTO Solver API';
       } catch (solverErr) {
-        errorEl.textContent = `Solver request failed, using local fallback: ${solverErr.message}`;
+        const message = solverErr && solverErr.message ? solverErr.message : String(solverErr);
+        $els.error.text(`Solver request failed, using local fallback: ${message}`);
       }
     }
 
@@ -938,26 +1048,26 @@ async function runCalculation() {
     const edge = sim.equity - breakEven;
     const ev = sim.equity - potOdds;
 
-    setMetricValue(document.getElementById('equity'), `${(sim.equity * 100).toFixed(2)}%`, sim.equity > breakEven ? 'positive' : 'negative');
-    document.getElementById('tie').textContent = `${(sim.tieRate * 100).toFixed(2)}%`;
-    document.getElementById('breakEven').textContent = `${(breakEven * 100).toFixed(2)}%`;
-    setMetricValue(document.getElementById('edge'), `${edge >= 0 ? '+' : ''}${(edge * 100).toFixed(2)}%p`, edge >= 0 ? 'positive' : 'negative');
-    setMetricValue(document.getElementById('ev'), `${ev >= 0 ? '+' : ''}${ev.toFixed(3)} pot`, ev >= 0 ? 'positive' : 'negative');
-    document.getElementById('ci').textContent = `${(sim.ciLow * 100).toFixed(2)}% ~ ${(sim.ciHigh * 100).toFixed(2)}%`;
-    document.getElementById('action').textContent = action.action;
-    document.getElementById('mix').textContent = action.mix;
-    document.getElementById('reason').textContent = `Need at least ${(breakEven * 100).toFixed(1)}%, estimated ${(sim.equity * 100).toFixed(1)}%. ${action.reason}`;
-    document.getElementById('samplingMode').textContent = sim.usedRange ? 'Range-weighted' : 'Uniform';
-    document.getElementById('source').textContent = source;
+    setMetricValue($els.equity, `${(sim.equity * 100).toFixed(2)}%`, sim.equity > breakEven ? 'positive' : 'negative');
+    $els.tie.text(`${(sim.tieRate * 100).toFixed(2)}%`);
+    $els.breakEven.text(`${(breakEven * 100).toFixed(2)}%`);
+    setMetricValue($els.edge, `${edge >= 0 ? '+' : ''}${(edge * 100).toFixed(2)}%p`, edge >= 0 ? 'positive' : 'negative');
+    setMetricValue($els.ev, `${ev >= 0 ? '+' : ''}${ev.toFixed(3)} pot`, ev >= 0 ? 'positive' : 'negative');
+    $els.ci.text(`${(sim.ciLow * 100).toFixed(2)}% ~ ${(sim.ciHigh * 100).toFixed(2)}%`);
+    $els.action.text(action.action);
+    $els.mix.text(formatRecommendationMix(action.mix));
+    $els.reason.text(`Need at least ${(breakEven * 100).toFixed(1)}%, estimated ${(sim.equity * 100).toFixed(1)}%. ${action.reason}`);
+    $els.samplingMode.text(sim.usedRange ? 'Range-weighted' : 'Uniform');
+    $els.source.text(source);
 
-    document.getElementById('precisionBadge').hidden = iterations >= 2000;
+    $els.precisionBadge.prop('hidden', iterations >= 2000);
 
     saveScenarioToHistory({
       street,
       hero,
       board,
       opponents,
-      potOdds: Number(document.getElementById('potOdds').value),
+      potOdds: Number($els.potOdds.val()),
       iterations,
       villainRange,
       position,
@@ -965,50 +1075,62 @@ async function runCalculation() {
       betSize,
     });
   } catch (err) {
-    errorEl.textContent = err.message || String(err);
+    const message = err && err.message ? err.message : String(err);
+    $els.error.text(message);
   } finally {
     isCalculating = false;
     setCalculationUiState({ busy: false });
   }
 }
 
-document.getElementById('street').addEventListener('change', () => {
-  const street = document.getElementById('street').value;
+$els.street.on('change', () => {
+  const street = String($els.street.val());
   const keep = streetBoardCount(street);
   for (let i = keep; i < 5; i += 1) state.board[i] = null;
   renderSlots();
   syncQuickInputFromState();
 });
 
-if (runBtnEl) runBtnEl.addEventListener('click', runCalculation);
+if ($els.runBtn.length) {
+  $els.runBtn.on('click', () => {
+    void runCalculation();
+  });
+}
 
-document.getElementById('quickInput').addEventListener('change', (e) => {
-  const errorEl = document.getElementById('error');
-  errorEl.textContent = '';
+$els.quickInput.on('change', (event) => {
+  $els.error.text('');
   try {
-    const street = document.getElementById('street').value;
-    const parsed = parseQuickInput(e.target.value, street);
+    const street = String($els.street.val());
+    const parsed = parseQuickInput(String($(event.currentTarget).val() || ''), street);
     state.hero = [...parsed.hero];
     state.board = [...parsed.board, null, null, null, null, null].slice(0, 5);
     renderSlots();
     syncQuickInputFromState();
   } catch (err) {
-    errorEl.textContent = err.message || String(err);
+    const message = err && err.message ? err.message : String(err);
+    $els.error.text(message);
   }
 });
 
-document.querySelectorAll('.preset').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    document.getElementById('villainRange').value = btn.dataset.range || '';
-  });
+$('.preset').on('click', (event) => {
+  $els.villainRange.val(String($(event.currentTarget).data('range') || ''));
 });
 
-document.getElementById('historySelect').addEventListener('change', (e) => {
-  if (!e.target.value) return;
-  loadScenarioFromHistory(Number(e.target.value));
+$els.historySelect.on('change', (event) => {
+  const value = String($(event.currentTarget).val() || '');
+  if (!value) return;
+  loadScenarioFromHistory(Number(value));
 });
 
-document.getElementById('cardDialog').addEventListener('close', () => {
+$els.deckGrid.on('click', '.deck-card', (event) => {
+  const $target = $(event.currentTarget);
+  if ($target.prop('disabled')) return;
+  const card = String($target.data('card') || '');
+  if (!card) return;
+  assignCard(card);
+});
+
+$els.cardDialog.on('close', () => {
   if (state.lastFocusedSlot) state.lastFocusedSlot.focus();
 });
 
@@ -1016,6 +1138,3 @@ bindRealtimeValidation();
 renderHistoryOptions();
 renderSlots();
 syncQuickInputFromState();
-
-
-
